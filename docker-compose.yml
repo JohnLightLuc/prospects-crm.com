@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: prospect_crm_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: prospect_crm
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: prospect_crm_2025
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d prospect_crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
