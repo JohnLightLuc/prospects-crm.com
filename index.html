@@ -1312,24 +1312,6 @@ function showNotif(title,sub,type='success') {
   setTimeout(()=>n.classList.remove('show'), 3500);
 }
 
-const STATUTS = ['Prospection','Premier contact','Qualification','Proposition','Négociation','Closing','Perdu','Stand-by'];
-const STATUS_CLASS = {
-  'Prospection':'s-prospection','Premier contact':'s-contact','Qualification':'s-qualification',
-  'Proposition':'s-proposition','Négociation':'s-negociation','Closing':'s-closing',
-  'Perdu':'s-perdu','Stand-by':'s-standby'
-};
-const STATUS_COLOR = {
-  'Prospection':'#60a5fa','Premier contact':'#a78bfa','Qualification':'#fbbf24',
-  'Proposition':'#fb923c','Négociation':'#22d3ee','Closing':'#34d399',
-  'Perdu':'#f87171','Stand-by':'#94a3b8'
-};
-
-// ===================== INIT =====================
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('date-display').textContent = new Date().toLocaleDateString('fr-FR', {weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  loadObjectifInputs();
-  renderAll();
-});
 
 function generateTrackId() {
   trackCounter++;
