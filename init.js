@@ -1,12 +1,12 @@
 // src/migrations/init.js
 // Exécuter une seule fois : node src/migrations/init.js
-require('dotenv').config();
-const pool = require('../../config/database');
+require("dotenv").config();
+const pool = require("../../config/database");
 
 async function migrate() {
   const client = await pool.connect();
   try {
-    console.log('🚀 Initialisation de la base de données...');
+    console.log("🚀 Initialisation de la base de données...");
     await client.query(`
 
       -- EXTENSION UUID
@@ -74,10 +74,10 @@ async function migrate() {
       );
 
       -- INDEX POUR LES PERFORMANCES
-      CREATE INDEX IF NOT EXISTS idx_prospects_status   ON prospects(status);
-      CREATE INDEX IF NOT EXISTS idx_prospects_sector   ON prospects(sector);
-      CREATE INDEX IF NOT EXISTS idx_prospects_created  ON prospects(created_at);
-      CREATE INDEX IF NOT EXISTS idx_history_prospect   ON prospect_history(prospect_id);
+     CREATE INDEX idx_prospects_status   ON prospects(status);
+     CREATE INDEX idx_prospects_sector   ON prospects(sector);
+     CREATE INDEX idx_prospects_created  ON prospects(created_at);
+     CREATE INDEX idx_history_prospect   ON prospect_history(prospect_id);
 
       -- TRIGGER updated_at automatique
       CREATE OR REPLACE FUNCTION update_updated_at()
@@ -97,21 +97,23 @@ async function migrate() {
       CREATE SEQUENCE IF NOT EXISTS track_id_seq START 1001;
     `);
 
-    console.log('✅ Tables créées avec succès.');
+    console.log("✅ Tables créées avec succès.");
 
     // Créer un admin par défaut
-    const bcrypt = require('bcryptjs');
-    const hash = await bcrypt.hash('Admin@2025', 10);
-    await client.query(`
+    const bcrypt = require("bcryptjs");
+    const hash = await bcrypt.hash("Admin@2025", 10);
+    await client.query(
+      `
       INSERT INTO users (nom, email, password, role)
       VALUES ('Administrateur', 'admin@prospect-crm.com', $1, 'admin')
       ON CONFLICT (email) DO NOTHING;
-    `, [hash]);
-    console.log('👤 Compte admin créé : admin@prospect-crm.com / Admin@2025');
-    console.log('   ⚠️  Changez le mot de passe après la première connexion !');
-
+    `,
+      [hash],
+    );
+    console.log("👤 Compte admin créé : admin@prospect-crm.com / Admin@2025");
+    console.log("   ⚠️  Changez le mot de passe après la première connexion !");
   } catch (err) {
-    console.error('❌ Erreur migration :', err.message);
+    console.error("❌ Erreur migration :", err.message);
   } finally {
     client.release();
     pool.end();
