@@ -74,10 +74,10 @@ async function migrate() {
       );
 
       -- INDEX POUR LES PERFORMANCES
-      CREATE INDEX IF NOT EXISTS idx_prospects_status   ON prospects(status);
-      CREATE INDEX IF NOT EXISTS idx_prospects_sector   ON prospects(sector);
-      CREATE INDEX IF NOT EXISTS idx_prospects_created  ON prospects(created_at);
-      CREATE INDEX IF NOT EXISTS idx_history_prospect   ON prospect_history(prospect_id);
+      CREATE INDEX idx_prospects_status   ON prospects(status);
+      CREATE INDEX idx_prospects_sector   ON prospects(sector);
+      CREATE INDEX idx_prospects_created  ON prospects(created_at);
+      CREATE INDEX idx_history_prospect   ON prospect_history(prospect_id);
 
       -- TRIGGER updated_at automatique
       CREATE OR REPLACE FUNCTION update_updated_at()
