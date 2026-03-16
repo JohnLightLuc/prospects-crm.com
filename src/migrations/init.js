@@ -8,7 +8,7 @@ async function migrate() {
     console.log('🚀 Initialisation de la base de données...');
 
     // Extension
-    await client.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`);
+    // await client.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`);
 
     // Table users
     await client.query(`
