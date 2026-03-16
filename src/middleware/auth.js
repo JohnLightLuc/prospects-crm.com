@@ -1,15 +1,20 @@
-require("dotenv").config();
-const pool = require("../../config/database");
-
+// src/migrations/init.js
+// Exécuter une seule fois : node src/migrations/init.js
+require('dotenv').config();
+const pool = require('../../config/database');
+ 
 async function migrate() {
   const client = await pool.connect();
   try {
-    console.log("🚀 Initialisation de la base de données...");
-
-    // Tables principales
+    console.log('🚀 Initialisation de la base de données...');
+ 
+    // Extension
     await client.query(`
       CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
+    `);
+ 
+    // Table users
+    await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id          SERIAL PRIMARY KEY,
         nom         VARCHAR(100) NOT NULL,
@@ -20,7 +25,10 @@ async function migrate() {
         created_at  TIMESTAMPTZ DEFAULT NOW(),
         last_login  TIMESTAMPTZ
       );
-
+    `);
+ 
+    // Table prospects
+    await client.query(`
       CREATE TABLE IF NOT EXISTS prospects (
         id            SERIAL PRIMARY KEY,
         track_id      VARCHAR(20) UNIQUE NOT NULL,
@@ -46,7 +54,10 @@ async function migrate() {
         created_at    TIMESTAMPTZ DEFAULT NOW(),
         updated_at    TIMESTAMPTZ DEFAULT NOW()
       );
-
+    `);
+ 
+    // Table prospect_history
+    await client.query(`
       CREATE TABLE IF NOT EXISTS prospect_history (
         id          SERIAL PRIMARY KEY,
         prospect_id INTEGER NOT NULL REFERENCES prospects(id) ON DELETE CASCADE,
@@ -55,7 +66,10 @@ async function migrate() {
         changed_by  INTEGER REFERENCES users(id),
         changed_at  TIMESTAMPTZ DEFAULT NOW()
       );
-
+    `);
+ 
+    // Table objectifs
+    await client.query(`
       CREATE TABLE IF NOT EXISTS objectifs (
         id              SERIAL PRIMARY KEY,
         user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -67,10 +81,11 @@ async function migrate() {
         UNIQUE(user_id, mois, annee)
       );
     `);
-
+ 
     // Index (compatibles PostgreSQL 9.2)
     await client.query(`
-      DO $$ BEGIN
+      DO $body$
+      BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_prospects_status') THEN
           CREATE INDEX idx_prospects_status ON prospects(status);
         END IF;
@@ -83,19 +98,25 @@ async function migrate() {
         IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_history_prospect') THEN
           CREATE INDEX idx_history_prospect ON prospect_history(prospect_id);
         END IF;
-      END $$;
+      END
+      $body$;
     `);
-
-    // Trigger updated_at (compatible PostgreSQL 9.2)
+ 
+    // Fonction trigger updated_at (syntaxe compatible PostgreSQL 9.2)
     await client.query(`
       CREATE OR REPLACE FUNCTION update_updated_at()
-      RETURNS TRIGGER AS $$
-      BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
-      $$ LANGUAGE plpgsql;
+      RETURNS TRIGGER LANGUAGE plpgsql AS '
+      BEGIN
+        NEW.updated_at = NOW();
+        RETURN NEW;
+      END
+      ';
     `);
-
+ 
+    // Trigger updated_at
     await client.query(`
-      DO $$ BEGIN
+      DO $body$
+      BEGIN
         IF NOT EXISTS (
           SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at'
         ) THEN
@@ -103,36 +124,35 @@ async function migrate() {
             BEFORE UPDATE ON prospects
             FOR EACH ROW EXECUTE PROCEDURE update_updated_at();
         END IF;
-      END $$;
+      END
+      $body$;
     `);
-
+ 
     // Séquence track_id
     await client.query(`
       CREATE SEQUENCE IF NOT EXISTS track_id_seq START 1001;
     `);
-
-    console.log("✅ Tables créées avec succès.");
-
+ 
+    console.log('✅ Tables créées avec succès.');
+ 
     // Admin par défaut
-    const bcrypt = require("bcryptjs");
-    const hash = await bcrypt.hash("Admin@2025", 10);
-    await client.query(
-      `
+    const bcrypt = require('bcryptjs');
+    const hash = await bcrypt.hash('Admin@2025', 10);
+    await client.query(`
       INSERT INTO users (nom, email, password, role)
       VALUES ('Administrateur', 'admin@prospect-crm.com', $1, 'admin')
       ON CONFLICT (email) DO NOTHING;
-    `,
-      [hash],
-    );
-
-    console.log("👤 Compte admin créé : admin@prospect-crm.com / Admin@2025");
-    console.log("   ⚠️  Changez le mot de passe après la première connexion !");
+    `, [hash]);
+ 
+    console.log('👤 Compte admin créé : admin@prospect-crm.com / Admin@2025');
+    console.log('   ⚠️  Changez le mot de passe après la première connexion !');
+ 
   } catch (err) {
-    console.error("❌ Erreur migration :", err.message);
+    console.error('❌ Erreur migration :', err.message);
   } finally {
     client.release();
     pool.end();
   }
 }
-
+ 
 migrate();
