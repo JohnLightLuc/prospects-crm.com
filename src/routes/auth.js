@@ -36,7 +36,7 @@ router.post('/login', async (req, res) => {
       user: { id: user.id, nom: user.nom, email: user.email, role: user.role }
     });
   } catch (err) {
-    console.error('Login error:', err.message, err.stack);
+    console.error(err);
     res.status(500).json({ error: 'Erreur serveur.' });
   }
 });
@@ -87,6 +87,40 @@ router.put('/password', authMiddleware, async (req, res) => {
   const hash = await bcrypt.hash(newPassword, 10);
   await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, req.user.id]);
   res.json({ message: 'Mot de passe mis à jour.' });
+});
+
+// ── PUT /api/auth/users/:id (admin modifie un utilisateur) ──────────
+router.put('/users/:id', authMiddleware, adminOnly, async (req, res) => {
+  const { id } = req.params;
+  const { nom, email, role, actif, password } = req.body;
+  try {
+    // Construire la requête dynamiquement selon les champs fournis
+    const updates = [];
+    const params  = [];
+    let i = 1;
+    if (nom      !== undefined) { updates.push(`nom=$${i++}`);    params.push(nom); }
+    if (email    !== undefined) { updates.push(`email=$${i++}`);  params.push(email); }
+    if (role     !== undefined) { updates.push(`role=$${i++}`);   params.push(role); }
+    if (actif    !== undefined) { updates.push(`actif=$${i++}`);  params.push(actif); }
+    if (password !== undefined && password !== '') {
+      const bcrypt = require('bcryptjs');
+      const hash = await bcrypt.hash(password, 10);
+      updates.push(`password=$${i++}`);
+      params.push(hash);
+    }
+    if (!updates.length) return res.status(400).json({ error: 'Aucun champ à mettre à jour.' });
+    params.push(id);
+    const { rows } = await pool.query(
+      `UPDATE users SET ${updates.join(',')} WHERE id=$${i} RETURNING id, nom, email, role, actif, created_at, last_login`,
+      params
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Utilisateur introuvable.' });
+    res.json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Cet email est déjà utilisé.' });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
 });
 
 module.exports = router;
