@@ -215,6 +215,11 @@ textarea.form-input{resize:vertical;min-height:80px}
       <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="23" y1="11" x2="17" y2="11"/><line x1="20" y1="8" x2="20" y2="14"/></svg>
       Utilisateurs
     </div>
+    <span class="nav-label" id="companies-sep" style="display:none">Super Admin</span>
+    <div class="nav-item" data-view="companies" id="companies-nav" onclick="showView('companies',this)" style="display:none">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+      Entreprises
+    </div>
   </nav>
   <div id="sidebar-user" style="padding:14px 16px;border-top:1px solid var(--border)"></div>
 </aside>
@@ -363,6 +368,20 @@ textarea.form-input{resize:vertical;min-height:80px}
   </div>
 </div>
 
+<!-- ── ENTREPRISES (SUPERADMIN) ── -->
+<div id="view-companies" style="display:none">
+  <div class="topbar">
+    <div class="topbar-title">Entreprises <span>Gestion multi-tenant</span></div>
+    <button class="btn btn-primary" onclick="openCompanyModal()">+ Nouvelle entreprise</button>
+  </div>
+  <div class="content">
+    <div class="table-wrap"><table>
+      <thead><tr><th>ID</th><th>Nom</th><th>Slug</th><th>Utilisateurs</th><th>Statut</th><th>Créé le</th><th>Actions</th></tr></thead>
+      <tbody id="companies-body"><tr><td colspan="7"><div class="empty-state"><p>Chargement...</p></div></td></tr></tbody>
+    </table></div>
+  </div>
+</div>
+
 </div><!-- end .main -->
 </div><!-- end .app -->
 
@@ -481,6 +500,37 @@ textarea.form-input{resize:vertical;min-height:80px}
   </div>
 </div></div>
 
+<!-- ══ MODALE ENTREPRISE (SUPERADMIN) ══ -->
+<div class="modal-overlay" id="company-modal" onclick="if(event.target===this)closeCompanyModal()">
+<div class="modal" style="width:600px">
+  <div class="modal-header">
+    <span class="modal-id">Nouveau</span>
+    <div class="modal-title">Créer une entreprise</div>
+    <button class="modal-close" onclick="closeCompanyModal()">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="form-section">
+      <div class="form-section-title">🏢 Entreprise</div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Nom *</label><input class="form-input" id="c-name" placeholder="Nom de l'entreprise"></div>
+        <div class="form-group"><label class="form-label">Slug *</label><input class="form-input" id="c-slug" placeholder="ex: acme-corp (sans espaces)"></div>
+      </div>
+    </div>
+    <div class="form-section">
+      <div class="form-section-title">👤 Administrateur initial</div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Nom complet *</label><input class="form-input" id="c-admin-nom" placeholder="Prénom NOM"></div>
+        <div class="form-group"><label class="form-label">Email *</label><input type="email" class="form-input" id="c-admin-email" placeholder="admin@entreprise.com"></div>
+        <div class="form-group full"><label class="form-label">Mot de passe *</label><input type="password" class="form-input" id="c-admin-pwd" placeholder="Minimum 8 caractères"></div>
+      </div>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-outline" onclick="closeCompanyModal()">Annuler</button>
+    <button class="btn btn-primary" id="c-save-btn" onclick="saveCompany()">✓ Créer l'entreprise</button>
+  </div>
+</div></div>
+
 <!-- ══ NOTIFICATION ══ -->
 <div class="notif" id="notif">
   <svg id="notif-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:20px;height:20px;flex-shrink:0;color:var(--green)"><polyline points="20 6 9 17 4 12"/></svg>
@@ -495,6 +545,7 @@ let authToken = localStorage.getItem('crm_token');
 let currentUser = JSON.parse(localStorage.getItem('crm_user')||'null');
 let prospects = [];
 let allUsers  = [];
+let allCompanies = [];
 let objectives = {prosp:30,closing:5,ca:5000000,nom:''};
 let editingProspectId = null;
 let editingUserId = null;
@@ -561,6 +612,15 @@ document.addEventListener('DOMContentLoaded',()=>{
 async function initApp(){
   connectSocket();
   renderSidebarUser();
+
+  if(currentUser.role==='superadmin'){
+    document.getElementById('companies-sep').style.display='';
+    document.getElementById('companies-nav').style.display='';
+    showView('companies');
+    await loadCompanies();
+    return;
+  }
+
   if(currentUser.role==='admin'){
     document.getElementById('admin-sep').style.display='';
     document.getElementById('admin-nav').style.display='';
@@ -571,7 +631,7 @@ async function initApp(){
 }
 
 function renderSidebarUser(){
-  const roles={admin:'🟣 Admin',manager:'🔵 Manager',commercial:'🟡 Commercial'};
+  const roles={admin:'🟣 Admin',manager:'🔵 Manager',commercial:'🟡 Commercial',superadmin:'🔴 Super Admin'};
   document.getElementById('sidebar-user').innerHTML=`
     <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px">${currentUser.nom}</div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:10px">${roles[currentUser.role]||currentUser.role}</div>
@@ -615,7 +675,7 @@ function removeOnlineUser(nom){const el=document.getElementById('ou-'+nom.replac
 //  NAVIGATION
 // ══════════════════════════════════════════════════════
 function showView(v,el){
-  ['tableau','prospects','pipeline','rapports','objectifs','admin'].forEach(id=>{
+  ['tableau','prospects','pipeline','rapports','objectifs','admin','companies'].forEach(id=>{
     const el2=document.getElementById('view-'+id);
     if(el2)el2.style.display=id===v?'':'none';
   });
@@ -625,6 +685,7 @@ function showView(v,el){
   if(v==='rapports')renderReport(currentReport);
   if(v==='objectifs')renderObjectifsSuivi();
   if(v==='admin'&&currentUser.role==='admin')loadUsers();
+  if(v==='companies'&&currentUser.role==='superadmin')loadCompanies();
 }
 
 // ══════════════════════════════════════════════════════
@@ -1110,6 +1171,68 @@ async function exportPDF(){
     showNotif('PDF exporté !','Fichier téléchargé');
   }catch(e){console.error(e);showNotif('Erreur export','Impossible de générer le PDF','error');}
   finally{btn.innerHTML=orig;btn.disabled=false;}
+}
+
+// ══════════════════════════════════════════════════════
+//  SUPERADMIN — GESTION ENTREPRISES
+// ══════════════════════════════════════════════════════
+async function loadCompanies(){
+  try{
+    allCompanies=await api('GET','/auth/companies');
+    renderCompanies();
+  }catch(e){showNotif('Erreur','Impossible de charger les entreprises','error');}
+}
+
+function renderCompanies(){
+  const body=document.getElementById('companies-body');
+  if(!allCompanies.length){body.innerHTML='<tr><td colspan="7"><div class="empty-state"><p>Aucune entreprise. Créez-en une avec le bouton ci-dessus.</p></div></td></tr>';return;}
+  body.innerHTML=allCompanies.map(c=>`
+    <tr>
+      <td class="td-id">#${c.id}</td>
+      <td style="font-weight:600">${c.name}</td>
+      <td style="font-size:12px;color:var(--text2)">${c.slug}</td>
+      <td style="font-weight:600;color:var(--accent)">${c.user_count||0}</td>
+      <td><span class="status ${c.actif?'s-closing':'s-perdu'}">${c.actif?'Actif':'Désactivé'}</span></td>
+      <td style="font-size:12px;color:var(--text2)">${new Date(c.created_at).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'})}</td>
+      <td onclick="event.stopPropagation()">
+        <button class="btn" style="padding:4px 10px;font-size:11px;background:${c.actif?'rgba(239,68,68,.15)':'rgba(16,185,129,.15)'};color:${c.actif?'var(--red)':'var(--green)'};border:1px solid ${c.actif?'rgba(239,68,68,.3)':'rgba(16,185,129,.3)'}" onclick="toggleCompany(${c.id},${c.actif})">${c.actif?'Désactiver':'Réactiver'}</button>
+      </td>
+    </tr>`).join('');
+}
+
+function openCompanyModal(){
+  ['c-name','c-slug','c-admin-nom','c-admin-email','c-admin-pwd'].forEach(id=>document.getElementById(id).value='');
+  const btn=document.getElementById('c-save-btn');btn.disabled=false;btn.textContent='✓ Créer l\'entreprise';
+  document.getElementById('company-modal').classList.add('open');
+}
+function closeCompanyModal(){document.getElementById('company-modal').classList.remove('open');}
+
+async function saveCompany(){
+  const name=document.getElementById('c-name').value.trim();
+  const slug=document.getElementById('c-slug').value.trim();
+  const adminNom=document.getElementById('c-admin-nom').value.trim();
+  const adminEmail=document.getElementById('c-admin-email').value.trim();
+  const adminPwd=document.getElementById('c-admin-pwd').value;
+  if(!name||!slug||!adminNom||!adminEmail||!adminPwd){showNotif('Champs requis','Remplissez tous les champs obligatoires','error');return;}
+  const btn=document.getElementById('c-save-btn');btn.disabled=true;btn.textContent='Création...';
+  try{
+    const company=await api('POST','/auth/companies',{name,slug});
+    await api('POST',`/auth/companies/${company.id}/admin`,{nom:adminNom,email:adminEmail,password:adminPwd});
+    closeCompanyModal();
+    await loadCompanies();
+    showNotif('Entreprise créée !',name+' et son administrateur sont actifs');
+  }catch(e){showNotif('Erreur',e.message,'error');}
+  finally{btn.disabled=false;btn.textContent='✓ Créer l\'entreprise';}
+}
+
+async function toggleCompany(id,actif){
+  const c=allCompanies.find(x=>x.id===id);if(!c)return;
+  if(!confirm(`${actif?'Désactiver':'Réactiver'} l'entreprise ${c.name} ?`))return;
+  try{
+    await api('PUT','/auth/companies/'+id,{actif:!actif});
+    await loadCompanies();
+    showNotif(actif?'Entreprise désactivée':'Entreprise réactivée',c.name);
+  }catch(e){showNotif('Erreur',e.message,'error');}
 }
 
 // ══════════════════════════════════════════════════════

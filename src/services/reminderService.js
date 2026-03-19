@@ -9,7 +9,7 @@ async function sendDailyReminders() {
     const { rows } = await pool.query(`
       SELECT p.*, u.email AS user_email, u.nom AS user_nom
       FROM prospects p
-      LEFT JOIN users u ON p.created_by = u.id
+      LEFT JOIN users u ON p.created_by = u.id AND u.company_id = p.company_id
       WHERE p.next_date = $1
         AND p.status NOT IN ('Closing','Perdu')
         AND p.next_action IS NOT NULL

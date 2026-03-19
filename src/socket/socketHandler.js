@@ -15,23 +15,28 @@ function initSocket(io) {
   });
 
   io.on('connection', (socket) => {
-    console.log(`🔌 Connecté : ${socket.user.nom} (${socket.user.email})`);
+    const user = socket.user;
+    const room = user.role === 'superadmin'
+      ? 'company:superadmin'
+      : `company:${user.company_id}`;
 
-    // Diffuser à tous les autres la connexion d'un utilisateur
-    socket.broadcast.emit('user:connected', {
-      nom:   socket.user.nom,
-      email: socket.user.email,
+    socket.join(room);
+    console.log(`🔌 Connecté : ${user.nom} (${user.email}) → ${room}`);
+
+    socket.to(room).emit('user:connected', {
+      nom:   user.nom,
+      email: user.email,
       time:  new Date().toISOString(),
     });
 
     socket.on('disconnect', () => {
-      console.log(`🔌 Déconnecté : ${socket.user.nom}`);
-      socket.broadcast.emit('user:disconnected', { nom: socket.user.nom });
+      console.log(`🔌 Déconnecté : ${user.nom}`);
+      socket.to(room).emit('user:disconnected', { nom: user.nom });
     });
 
     // Typing indicator — un utilisateur est en train de saisir
     socket.on('prospect:typing', (data) => {
-      socket.broadcast.emit('prospect:typing', { ...data, user: socket.user.nom });
+      socket.to(room).emit('prospect:typing', { ...data, user: user.nom });
     });
   });
 }

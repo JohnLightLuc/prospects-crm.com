@@ -1,7 +1,7 @@
 // src/routes/prospects.js
 const express = require('express');
 const pool    = require('../../config/database');
-const { authMiddleware } = require('../middleware/auth');
+const { authMiddleware, companyScope } = require('../middleware/auth');
 const { notifyNewProspect, notifyStatusChange } = require('../services/emailService');
 
 const router = express.Router();
@@ -12,9 +12,11 @@ async function generateTrackId(client) {
   return 'PRO-' + String(rows[0].val).padStart(4, '0');
 }
 
-// Récupère tous les emails actifs pour notifications
-async function getAllEmails(client) {
-  const { rows } = await client.query("SELECT email FROM users WHERE actif = true");
+// Récupère les emails actifs de la société pour notifications
+async function getCompanyEmails(pool, companyId) {
+  const { rows } = await pool.query(
+    'SELECT email FROM users WHERE actif = true AND company_id = $1', [companyId]
+  );
   return rows.map(r => r.email);
 }
 
@@ -24,6 +26,10 @@ router.get('/', authMiddleware, async (req, res) => {
     const { status, sector, source, priority, q } = req.query;
     let where = [], params = [];
     let i = 1;
+
+    const scope = companyScope(req.user, 'p', i);
+    if (scope.clause) { where.push(scope.clause); params.push(...scope.params); }
+    i = scope.nextIndex;
 
     if (status)   { where.push(`p.status = $${i++}`);   params.push(status); }
     if (sector)   { where.push(`p.sector = $${i++}`);   params.push(sector); }
@@ -72,6 +78,9 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // ── POST /api/prospects ─────────────────────────────────────────────
 router.post('/', authMiddleware, async (req, res) => {
+  if (req.user.role === 'superadmin')
+    return res.status(403).json({ error: 'Le super administrateur ne peut pas créer de prospects.' });
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -84,24 +93,24 @@ router.post('/', authMiddleware, async (req, res) => {
     if (!company || !sector || !keyperson || !location)
       return res.status(400).json({ error: 'Champs obligatoires manquants.' });
 
-    const trackId = await generateTrackId(client);
+    const trackId   = await generateTrackId(client);
+    const companyId = req.user.company_id;
 
     const { rows } = await client.query(`
       INSERT INTO prospects
         (track_id, company, sector, keyperson, poste, tel, email, location, size,
          status, source, priority, ca_potentiel, next_action, next_date,
-         expected, obtained, comment, need, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+         expected, obtained, comment, need, company_id, created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
       RETURNING *
     `, [trackId, company, sector, keyperson, poste||null, tel||null, email||null,
         location, size||null, status||'Prospection', source||null, priority||'medium',
-        ca_potentiel||0, next_action||null,
-        next_date||null, expected||null, obtained||null, comment||null, need||null,
-        req.user.id]);
+        ca_potentiel||0, next_action||null, next_date||null,
+        expected||null, obtained||null, comment||null, need||null,
+        companyId, req.user.id]);
 
     const prospect = rows[0];
 
-    // Historique initial
     await client.query(`
       INSERT INTO prospect_history (prospect_id, status, comment, changed_by)
       VALUES ($1,$2,$3,$4)
@@ -109,13 +118,15 @@ router.post('/', authMiddleware, async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Notification email asynchrone
-    getAllEmails(pool).then(emails => {
+    // Notification email asynchrone (société uniquement)
+    getCompanyEmails(pool, companyId).then(emails => {
       notifyNewProspect(prospect, req.user.nom, emails).catch(console.error);
     });
 
-    // Émettre via Socket.io (attaché sur req.app)
-    req.app.get('io').emit('prospect:created', prospect);
+    // Socket.io — room de la société
+    const io   = req.app.get('io');
+    const room = `company:${companyId}`;
+    io.to(room).emit('prospect:created', prospect);
 
     res.status(201).json(prospect);
   } catch (err) {
@@ -134,10 +145,19 @@ router.put('/:id', authMiddleware, async (req, res) => {
     await client.query('BEGIN');
     const { id } = req.params;
 
-    // Récupérer l'ancien statut
-    const old = await client.query('SELECT * FROM prospects WHERE id = $1', [id]);
+    // Vérifier existence + appartenance société
+    let old;
+    if (req.user.role === 'superadmin') {
+      old = await client.query('SELECT * FROM prospects WHERE id = $1', [id]);
+    } else {
+      old = await client.query(
+        'SELECT * FROM prospects WHERE id = $1 AND company_id = $2',
+        [id, req.user.company_id]
+      );
+    }
     if (!old.rows.length) return res.status(404).json({ error: 'Prospect introuvable.' });
     const oldStatus = old.rows[0].status;
+    const companyId = old.rows[0].company_id;
 
     const {
       company, sector, keyperson, poste, tel, email, location, size,
@@ -160,15 +180,13 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
     const prospect = rows[0];
 
-    // Enregistrer changement de statut dans l'historique
     if (oldStatus !== status) {
       await client.query(`
         INSERT INTO prospect_history (prospect_id, status, comment, changed_by)
         VALUES ($1,$2,$3,$4)
       `, [id, status, comment || `Statut changé : ${oldStatus} → ${status}`, req.user.id]);
 
-      // Notification email changement de statut
-      getAllEmails(pool).then(emails => {
+      getCompanyEmails(pool, companyId).then(emails => {
         notifyStatusChange(prospect, oldStatus, status, req.user.nom, comment, emails)
           .catch(console.error);
       });
@@ -176,7 +194,9 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
     await client.query('COMMIT');
 
-    req.app.get('io').emit('prospect:updated', prospect);
+    const io   = req.app.get('io');
+    const room = `company:${companyId}`;
+    io.to(room).emit('prospect:updated', prospect);
     res.json(prospect);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -191,10 +211,23 @@ router.put('/:id', authMiddleware, async (req, res) => {
 router.delete('/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
   try {
-    const { rows } = await pool.query('DELETE FROM prospects WHERE id=$1 RETURNING id, track_id, company', [id]);
-    if (!rows.length) return res.status(404).json({ error: 'Prospect introuvable.' });
-    req.app.get('io').emit('prospect:deleted', { id: parseInt(id) });
-    res.json({ message: `${rows[0].company} supprimé.` });
+    let result;
+    if (req.user.role === 'superadmin') {
+      result = await pool.query(
+        'DELETE FROM prospects WHERE id=$1 RETURNING id, track_id, company, company_id', [id]
+      );
+    } else {
+      result = await pool.query(
+        'DELETE FROM prospects WHERE id=$1 AND company_id=$2 RETURNING id, track_id, company, company_id',
+        [id, req.user.company_id]
+      );
+    }
+    if (!result.rows.length) return res.status(404).json({ error: 'Prospect introuvable.' });
+    const companyId = result.rows[0].company_id;
+    const io   = req.app.get('io');
+    const room = `company:${companyId}`;
+    io.to(room).emit('prospect:deleted', { id: parseInt(id) });
+    res.json({ message: `${result.rows[0].company} supprimé.` });
   } catch (err) {
     res.status(500).json({ error: 'Erreur lors de la suppression.' });
   }
@@ -202,14 +235,33 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
 // ── GET /api/prospects/:id/history ─────────────────────────────────
 router.get('/:id/history', authMiddleware, async (req, res) => {
-  const { rows } = await pool.query(`
-    SELECT ph.*, u.nom AS changed_by_name
-    FROM prospect_history ph
-    LEFT JOIN users u ON ph.changed_by = u.id
-    WHERE ph.prospect_id = $1
-    ORDER BY ph.changed_at DESC
-  `, [req.params.id]);
-  res.json(rows);
+  try {
+    let query, params;
+    if (req.user.role === 'superadmin') {
+      query = `
+        SELECT ph.*, u.nom AS changed_by_name
+        FROM prospect_history ph
+        LEFT JOIN users u ON ph.changed_by = u.id
+        WHERE ph.prospect_id = $1
+        ORDER BY ph.changed_at DESC
+      `;
+      params = [req.params.id];
+    } else {
+      query = `
+        SELECT ph.*, u.nom AS changed_by_name
+        FROM prospect_history ph
+        LEFT JOIN users u ON ph.changed_by = u.id
+        JOIN prospects p ON ph.prospect_id = p.id
+        WHERE ph.prospect_id = $1 AND p.company_id = $2
+        ORDER BY ph.changed_at DESC
+      `;
+      params = [req.params.id, req.user.company_id];
+    }
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur historique.' });
+  }
 });
 
 module.exports = router;

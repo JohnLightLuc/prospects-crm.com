@@ -1,35 +1,41 @@
 // src/routes/reports.js
 const express = require('express');
 const pool    = require('../../config/database');
-const { authMiddleware } = require('../middleware/auth');
+const { authMiddleware, companyScope } = require('../middleware/auth');
 
 const router = express.Router();
 
 // ── GET /api/reports/kpis ───────────────────────────────────────────
 router.get('/kpis', authMiddleware, async (req, res) => {
   try {
-    const now = new Date();
+    const now          = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
     const startOfWeek  = new Date(now - 7*24*60*60*1000).toISOString();
 
+    const scope  = companyScope(req.user, '', 1);
+    const p      = scope.params;            // [] or [company_id]
+    const ni     = scope.nextIndex;         // 1 or 2
+    const cWhere = scope.clause ? `WHERE ${scope.clause}` : '';
+    const cAnd   = scope.clause ? `AND ${scope.clause}`   : '';
+
     const [total, monthly, weekly, byStatus, bySource, bySector, closingCA] = await Promise.all([
-      pool.query('SELECT COUNT(*) FROM prospects'),
-      pool.query('SELECT COUNT(*) FROM prospects WHERE created_at >= $1', [startOfMonth]),
-      pool.query('SELECT COUNT(*) FROM prospects WHERE updated_at >= $1', [startOfWeek]),
-      pool.query('SELECT status, COUNT(*) FROM prospects GROUP BY status'),
-      pool.query('SELECT source, COUNT(*) FROM prospects WHERE source IS NOT NULL GROUP BY source ORDER BY COUNT DESC LIMIT 8'),
-      pool.query('SELECT sector, COUNT(*) FROM prospects GROUP BY sector ORDER BY COUNT DESC LIMIT 10'),
-      pool.query("SELECT SUM(ca_potentiel) AS total_ca FROM prospects WHERE status = 'Closing'"),
+      pool.query(`SELECT COUNT(*) FROM prospects ${cWhere}`, p),
+      pool.query(`SELECT COUNT(*) FROM prospects WHERE created_at >= $${ni} ${cAnd}`, [...p, startOfMonth]),
+      pool.query(`SELECT COUNT(*) FROM prospects WHERE updated_at >= $${ni} ${cAnd}`, [...p, startOfWeek]),
+      pool.query(`SELECT status, COUNT(*) FROM prospects ${cWhere} GROUP BY status`, p),
+      pool.query(`SELECT source, COUNT(*) FROM prospects WHERE source IS NOT NULL ${cAnd} GROUP BY source ORDER BY COUNT DESC LIMIT 8`, p),
+      pool.query(`SELECT sector, COUNT(*) FROM prospects ${cWhere} GROUP BY sector ORDER BY COUNT DESC LIMIT 10`, p),
+      pool.query(`SELECT SUM(ca_potentiel) AS total_ca FROM prospects WHERE status = $${ni} ${cAnd}`, [...p, 'Closing']),
     ]);
 
     res.json({
-      total:        parseInt(total.rows[0].count),
-      monthly:      parseInt(monthly.rows[0].count),
-      weekly:       parseInt(weekly.rows[0].count),
-      byStatus:     byStatus.rows,
-      bySource:     bySource.rows,
-      bySector:     bySector.rows,
-      closingCA:    parseFloat(closingCA.rows[0].total_ca) || 0,
+      total:     parseInt(total.rows[0].count),
+      monthly:   parseInt(monthly.rows[0].count),
+      weekly:    parseInt(weekly.rows[0].count),
+      byStatus:  byStatus.rows,
+      bySource:  bySource.rows,
+      bySector:  bySector.rows,
+      closingCA: parseFloat(closingCA.rows[0].total_ca) || 0,
     });
   } catch (err) {
     console.error(err);
@@ -41,22 +47,30 @@ router.get('/kpis', authMiddleware, async (req, res) => {
 router.get('/hebdo', authMiddleware, async (req, res) => {
   try {
     const since = new Date(Date.now() - 7*24*60*60*1000).toISOString();
+    const scope = companyScope(req.user, 'p', 1);
+    const p     = scope.params;
+    const ni    = scope.nextIndex;
+    const cAnd  = scope.clause ? `AND ${scope.clause}` : '';
+
     const { rows: prospects } = await pool.query(`
       SELECT p.*, u.nom AS created_by_name
       FROM prospects p LEFT JOIN users u ON p.created_by = u.id
-      WHERE p.updated_at >= $1 ORDER BY p.updated_at DESC
-    `, [since]);
+      WHERE p.updated_at >= $${ni} ${cAnd}
+      ORDER BY p.updated_at DESC
+    `, [...p, since]);
 
     const { rows: history } = await pool.query(`
       SELECT ph.*, u.nom AS changed_by_name, p.company, p.track_id
       FROM prospect_history ph
       LEFT JOIN users u ON ph.changed_by = u.id
       LEFT JOIN prospects p ON ph.prospect_id = p.id
-      WHERE ph.changed_at >= $1 ORDER BY ph.changed_at DESC
-    `, [since]);
+      WHERE ph.changed_at >= $${ni} ${cAnd}
+      ORDER BY ph.changed_at DESC
+    `, [...p, since]);
 
     res.json({ prospects, history, period: '7 derniers jours' });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Erreur rapport hebdo.' });
   }
 });
@@ -68,26 +82,32 @@ router.get('/mensuel', authMiddleware, async (req, res) => {
     const mois  = parseInt(req.query.mois)  || now.getMonth() + 1;
     const annee = parseInt(req.query.annee) || now.getFullYear();
     const start = new Date(annee, mois-1, 1).toISOString();
-    const end   = new Date(annee, mois, 1).toISOString();
+    const end   = new Date(annee, mois,   1).toISOString();
+
+    const scope = companyScope(req.user, 'p', 1);
+    const p     = scope.params;
+    const ni    = scope.nextIndex;
+    const cAnd  = scope.clause ? `AND ${scope.clause}` : '';
 
     const { rows: prospects } = await pool.query(`
       SELECT p.*, u.nom AS created_by_name
       FROM prospects p LEFT JOIN users u ON p.created_by = u.id
-      WHERE p.updated_at >= $1 AND p.updated_at < $2
+      WHERE p.updated_at >= $${ni} AND p.updated_at < $${ni+1} ${cAnd}
       ORDER BY p.updated_at DESC
-    `, [start, end]);
+    `, [...p, start, end]);
 
     const { rows: history } = await pool.query(`
       SELECT ph.*, u.nom AS changed_by_name, p.company, p.track_id
       FROM prospect_history ph
       LEFT JOIN users u ON ph.changed_by = u.id
       LEFT JOIN prospects p ON ph.prospect_id = p.id
-      WHERE ph.changed_at >= $1 AND ph.changed_at < $2
+      WHERE ph.changed_at >= $${ni} AND ph.changed_at < $${ni+1} ${cAnd}
       ORDER BY ph.changed_at DESC
-    `, [start, end]);
+    `, [...p, start, end]);
 
     res.json({ prospects, history, period: `${mois}/${annee}` });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Erreur rapport mensuel.' });
   }
 });
@@ -106,18 +126,21 @@ router.get('/objectifs', authMiddleware, async (req, res) => {
 
 // ── PUT /api/objectifs ──────────────────────────────────────────────
 router.put('/objectifs', authMiddleware, async (req, res) => {
+  if (req.user.role === 'superadmin')
+    return res.status(403).json({ error: 'Le super administrateur ne peut pas définir d\'objectifs.' });
+
   const now = new Date();
   const { obj_prospection, obj_closing, obj_ca, mois, annee } = req.body;
   const m = mois  || now.getMonth() + 1;
   const a = annee || now.getFullYear();
 
   const { rows } = await pool.query(`
-    INSERT INTO objectifs (user_id, mois, annee, obj_prospection, obj_closing, obj_ca)
-    VALUES ($1,$2,$3,$4,$5,$6)
+    INSERT INTO objectifs (user_id, company_id, mois, annee, obj_prospection, obj_closing, obj_ca)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
     ON CONFLICT (user_id, mois, annee) DO UPDATE SET
-      obj_prospection=$4, obj_closing=$5, obj_ca=$6
+      obj_prospection=$5, obj_closing=$6, obj_ca=$7
     RETURNING *
-  `, [req.user.id, m, a, obj_prospection||30, obj_closing||5, obj_ca||5000000]);
+  `, [req.user.id, req.user.company_id, m, a, obj_prospection||30, obj_closing||5, obj_ca||5000000]);
 
   req.app.get('io').emit('objectifs:updated', rows[0]);
   res.json(rows[0]);
